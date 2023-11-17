@@ -7,6 +7,7 @@ import time
 import re
 import math
 from bs4 import BeautifulSoup
+from datetime import timedelta, datetime
 
 # Selenium + BeautifulSoup4
 # - Selenium :  전체소스코드 가져오기(+동적으로 페이지 조작)
@@ -28,7 +29,7 @@ options.add_experimental_option("detach", True)
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 # URL 접속
-url = "https://movie.daum.net/moviedb/grade?movieId=165591"
+url = "https://movie.daum.net/moviedb/grade?movieId=169137"
 driver.get(url)
 time.sleep(3)
 
@@ -58,4 +59,34 @@ for i in range(click_cnt):
 # 전체 소스코드 가져오기2(평점 모두 출력)
 doc_html = driver.page_source
 doc = BeautifulSoup(doc_html, "html.parser")
-# review_list = doc.select("")
+review_list = doc.select("ul.list_comment > li")
+
+for item in review_list:
+    print("="*100)
+    # 평점
+    review_score = item.select("div.ratings")[0].get_text()
+    print(f"    - 평점: {review_score}")
+    review_content = item.select("p.desc_txt")[0].get_text().strip()
+    # \n : 한 줄 개행
+    # 수집한 리뷰 개행 -> 문자열 안에 \n 포함
+    review_content = re.sub("\n", "", review_content)
+    print(f"    - 리뷰 : {review_content}")
+    review_writer = item.select("a.link_nick > span")[1].get_text()  # [댓글 작성자, 작성자, 댓글 모아보기]
+    print(f"    - 작성자 : {review_writer}")
+
+    # 24시간이내에 작성된 글은 날쨔 -> 예: 21시간전, 17시간전
+    # 실제 날짜 표기법 -> 2023. 11. 17. 12:15
+    # 표기법: 21시간전 -> 2023. 11. 17, 12:15
+
+    # 21시간 전 잘못 뜨는 경우를 어떤 조건을 주면 찾을 수 있을까?
+    review_date = item.select("span.txt_date")[0].get_text()
+
+    if len(review_date) < 7:
+        # 현재시간 - 17시간
+        # 예 : 17시간전 -> 숫자만 추출 : 17
+        reg_hour = int(re.sub(r"[^~0-9]", "", review_date))
+        # 예) 현재시간(2023.11.17 12:29) - 18 = 2023-11-16 18:29:23.232500
+        review_date = datetime.now() - timedelta(hours=reg_hour)
+        # 예) 2023-11-16 18:29:23.232500 -> 2023. 11. 6. 18:29
+        review_date = review_date.strftime("%Y. %m. %d. %H:%M")
+    print(f"    - 날짜 : {review_date}")
