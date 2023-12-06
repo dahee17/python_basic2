@@ -1,3 +1,6 @@
+# TODO: 스케줄러 등록 하루에 1번 수집(낮12시)
+#       → 중복 방지를 위해서(DB에 저장된 리뷰의 마지막 날짜보다 큰 애들만 수집)
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -10,7 +13,7 @@ import re
 import math
 from bs4 import BeautifulSoup
 
-from db.movie_dao import add_review
+from db.movie_dao import add_review, get_last_review
 # pip install webdriver_manager
 # pip install selenium
 
@@ -22,7 +25,16 @@ from db.movie_dao import add_review
 #   - 웹브라우저 검사(Test) 도구 → 데이터 수집
 #   - 전용 브라우저(크롬, 파이어폭스, 등등)로 동작
 #   - 전용 브라우저 Open → 작업 → 브라우저 Close(Default)
-def review_collector(movie_code) :
+
+
+def review_collector(movie_code):
+    # DB에서 데이터 조회 실패 → None
+    last_date = get_last_review()
+    if last_date == None:
+        last_date = 0
+    else:
+        last_date = int(last_date["int_regdate"])
+
     # ** Selenium 사용방법 2가지
     #  1.직접 다운로드(크롬 브라우저)해서 사용
     #    url: https://sites.google.com/chromium.org/driver/
@@ -48,9 +60,6 @@ def review_collector(movie_code) :
     movie_title = doc.select("span.txt_tit")[0].get_text()
     print(f"영화제목: {movie_title}")
 
-
-
-
     total_review_cnt = doc.select("span.txt_netizen")[0].get_text()
     # (187명) 에서 숫자만 추출 방법
     #   1.문자열 슬라이싱 방법
@@ -73,7 +82,47 @@ def review_collector(movie_code) :
 
     print(f"전체리뷰: {len(review_list)}")
 
+    # 반복 1회마다 리뷰 1건씩 수집
+    count = 0  # 수집 리뷰 건수
     for item in review_list:
+        review_date = item.select("span.txt_date")[0].get_text()
+        if review_date == "조금전":
+            review_date = datetime.now() - timedelta(minutes=1)  # 현재시간 - 1분
+            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
+        elif review_date[-2:] == "분전":
+            reg_minute = int(re.sub(r"[^~0-9]", "", review_date))
+            review_date = datetime.now() - timedelta(minutes=reg_minute)
+            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
+        elif review_date[-3:] == "시간전":
+            reg_hour = int(re.sub(r"[^~0-9]", "", review_date))
+            review_date = datetime.now() - timedelta(hours=reg_hour)
+            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
+        # review_date = 수집하려는 리뷰의 날짜
+
+        # DB에 저장된 리뷰 중 최신 날짜 가져오기
+        # 날짜비교 -> 숫자
+        # DB: 2023.11.30 10:30       202311301030
+        # Collect: 2023.12.01 10:40  202312011040
+        collect_date = int(re.sub(r"[^~0-9]", "", review_date))
+        if last_date >= collect_date:
+            continue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        count += 1
         print("=" * 100)
         review_score = item.select("div.ratings")[0].get_text()
         print(f"  - 평점: {review_score}")
@@ -84,36 +133,11 @@ def review_collector(movie_code) :
         print(f"  - 리뷰: {review_content}")
         review_writer = item.select("a.link_nick > span")[1].get_text()  # [댓글 작성자, 작성자, 댓글 모아보기]
         print(f"  - 작성자: {review_writer}")
-
-        # 다음 영화리뷰 날짜 표기법 4가지
-        # 1. 조금 전 : 현재시간(분) -1분
-        # 2. ?분 전 : 현재시간(분) - ?
-        # 3. ?시간 전 : 현재시간(시간) - ?
-        # 4. 2023. 11. 29. 14:18 : 그대로
-        # 24시간 이내에 작성된 글은 날짜 → 예: 21시간전, 17시간전
-        # 실제 날짜 표기법 → 2023. 11. 17. 12:15
-        # 표기법: 21시간전 → 2023. 11. 17. 12:15
-        review_date = item.select("span.txt_date")[0].get_text()
-
-        # review_date -> 4가지 표기법 중 1개
-        if review_date == "조금전":
-            review_date = datetime.now() - timedelta(minutes=1)  # 현재시간 - 1분
-            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
-        elif review_date[-2] == "분전" :
-            # 1분전 ~ 59분전 -> "분전"
-            reg_minute = int(re.sub(r"[^~0-9]", "", review_date))
-            review_date = datetime.now() - timedelta(minutes=reg_minute)
-            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
-        elif review_date[-3] == "시간전":
-            # 1시간 ~ 23시간 -> "시간전"
-            reg_hour = int(re.sub(r"[^~0-9]", "", review_date))
-            review_date = datetime.now() - timedelta(hours=reg_hour)
-            review_date = review_date.strftime("%Y. %m. %d. %H:%M")
-
         print(f"  - 날짜: {review_date}")
 
         # MariaDB에 저장
-        #  1) DB에 보낼 데이터 만들기
+        #  1) DB에 보낼 데이터(리뷰 1건) 만들기
+        # Tip: key값 → Table의 coulmn(열)과 동일하게
         data = {
             "title": movie_title,
             "review": review_content,
@@ -122,3 +146,7 @@ def review_collector(movie_code) :
             "reg_date": review_date
         }
         add_review(data)
+
+    # 현재시간 get → 날짜표기법 "2023.12.1 11:40:25"
+    now = datetime.now().strftime("%Y.%m.%d %H:%M:%S")
+    print(f"{now} → 수집 된 리뷰 {count}건")
